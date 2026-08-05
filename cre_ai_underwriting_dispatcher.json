@@ -1,0 +1,861 @@
+{
+  "name": "Automated CRE Underwriting & Risk Analysis Pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "value": "={{ $json.id }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        384,
+        -80
+      ],
+      "id": "156c39ff-85d7-4991-a507-dbb1f7f56f4b",
+      "name": "Download file",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "WwyOO1Fgv4M3sSPC",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "99478df7-32b3-49eb-9ff2-109138dcd666",
+              "leftValue": "={{ $binary.data.mimeType }}",
+              "rightValue": "application/pdf",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        592,
+        -80
+      ],
+      "id": "25fcfe65-7990-4521-8dae-e978f67c58b5",
+      "name": "Filter Only PDF"
+    },
+    {
+      "parameters": {
+        "operation": "pdf",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        832,
+        -96
+      ],
+      "id": "c4959a2b-603d-4b7e-a582-611bdf45751d",
+      "name": "Extract from File"
+    },
+    {
+      "parameters": {
+        "operation": "move",
+        "fileId": {
+          "__rl": true,
+          "value": "={{ $('Search files and folders').item.json.id }}",
+          "mode": "id"
+        },
+        "driveId": {
+          "__rl": true,
+          "value": "My Drive",
+          "mode": "list",
+          "cachedResultName": "My Drive",
+          "cachedResultUrl": "https://drive.google.com/drive/my-drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "1IvcGYqXDxifzHZj4WMrenVzPKeW2HPC7",
+          "mode": "list",
+          "cachedResultName": "02_Underwriting_Processed",
+          "cachedResultUrl": "https://drive.google.com/drive/folders/1IvcGYqXDxifzHZj4WMrenVzPKeW2HPC7"
+        }
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        1744,
+        -96
+      ],
+      "id": "e1ab21dd-4593-40e8-8eca-61c7bbaf6dbc",
+      "name": "Move file",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "WwyOO1Fgv4M3sSPC",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-3.1-flash-lite",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        1040,
+        144
+      ],
+      "id": "af1b926a-fc41-42ab-ac9b-be04d07677b9",
+      "name": "Google Gemini Chat Model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "yedx9ga2XPSt4Ed2",
+          "name": "Google Gemini(PaLM) Api account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=The file currently being processed is: {{ $('Search files and folders').item.json.name }}\n\nHere is the extracted text content of the underwriting document:\n{{ $json.text }}\n\nPlease analyze the document above and strictly follow the output format specified in the system prompt.",
+        "options": {
+          "systemMessage": "=You are an expert Senior Real Estate Analyst.\n\nCRITICAL INSTRUCTIONS:\n1. FOCUS ON PROVIDED TEXT: Analyze ONLY the text content of the document provided directly in the user prompt. Do not invent data, assume unstated details, or answer from general memory.\n\n2. PROPERTY NAME EXTRACTION:\nExtract the official Property Name from the text (e.g., \"Pinecrest Logistics Center\"). If the exact property name is missing or ambiguous in the text body, strictly use the document's file name provided in the prompt (cleaned of file extensions and underscores). Never output \"Not Specified\" for Property Name if a file name is available.\n\n3. STRICT DECISION MATRIX FOR UNDERWRITING RECOMMENDATION:\nYou MUST determine the 'Underwriting Recommendation' by strictly following this numerical hierarchy in order:\n\n- STEP 1 (REJECTED): If DSCR < 0.50x OR Occupancy Rate < 60% OR there is tenant bankruptcy/abandonment, output STRICTLY \"Rejected\".\n- STEP 2 (APPROVED): If DSCR >= 1.25x AND Occupancy Rate >= 90%, output STRICTLY \"Approved\".\n- STEP 3 (REVIEW REQUIRED): For ALL OTHER CASES (including any DSCR between 0.50x and 1.24x, or Occupancy Rate between 60% and 89%), output STRICTLY \"Review Required\". Do NOT mark as Rejected if DSCR is >= 0.50x unless STEP 1 is triggered.\n\n4. MANDATORY OUTPUT FORMAT:\nProvide a concise analysis of this property. Regardless of the user's query, YOU MUST ALWAYS conclude your final response with the EXACT block structure below. Do not alter key names, colons, or dashes, as downstream automated systems rely on this exact syntax:\n\n--- SUMMARY METRICS ---\n- Property Name: [Exact Property Name or Cleaned File Name]\n- NOI Value: [Net Operating Income, e.g., $775,112 or Not Specified]\n- DSCR Ratio: [Debt Coverage Ratio, e.g., 1.34x or Not Specified]\n- Risk Summary: [1-2 concise sentences highlighting key risks for this specific property]\n- Underwriting Recommendation: [Choose strictly ONE: Approved | Review Required | Rejected]\n\nNOTE: If financial metrics (NOI/DSCR) are missing from the provided document text, state \"Not Specified\" for those lines inside the SUMMARY METRICS block, but KEEP the exact block structure intact."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        1040,
+        -96
+      ],
+      "id": "36da29e7-1198-4bb7-ada0-a0fcaa850c17",
+      "name": "AI Agent",
+      "retryOnFail": false,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -240,
+        -80
+      ],
+      "id": "53cd0de0-2b21-41b2-828a-bb567e2b71f1",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "resource": "fileFolder",
+        "filter": {
+          "folderId": {
+            "__rl": true,
+            "value": "1f5JVq4r6tSeREyMcSHqAH8VkdzsSBhFU",
+            "mode": "list",
+            "cachedResultName": "01_Underwriting_Input",
+            "cachedResultUrl": "https://drive.google.com/drive/folders/1f5JVq4r6tSeREyMcSHqAH8VkdzsSBhFU"
+          }
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -32,
+        -80
+      ],
+      "id": "9d32ab62-bc86-431e-9902-082deeb6811f",
+      "name": "Search files and folders",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "WwyOO1Fgv4M3sSPC",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        2080,
+        752
+      ],
+      "id": "a4bf0007-65bf-43b1-a57e-03aefc1c127e",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1. Ambil teks output dari AI Agent\nlet text = \"\";\nif (typeof $input.item.json.output === 'string') {\n  text = $input.item.json.output;\n} else if (typeof $input.item.json.output === 'object') {\n  text = JSON.stringify($input.item.json.output);\n}\n\n// 2. Fungsi pembantu untuk ekstrak data berdasarkan label secara fleksibel\nfunction extractValue(regex, defaultValue = \"Not Specified\") {\n  const match = text.match(regex);\n  if (match && match[1] && match[1].trim() !== \"\") {\n    return match[1].replace(/[\\*\\_\\#]/g, \"\").trim();\n  }\n  return defaultValue;\n}\n\n// 3. Ekstraksi Dinamis\n// Menangkap nilai setelah tanda titik dua (:) pada label baku\nlet propName = extractValue(/(?:Property Name|Property)\\s*[:\\-\\=]\\s*([^\\n\\r\\-]+)/i);\nlet noi = extractValue(/(?:NOI Value|NOI|Net Operating Income)\\s*[:\\-\\=]\\s*([^\\n\\r\\-]+)/i);\nlet dscr = extractValue(/(?:DSCR Ratio|DSCR|Debt Coverage Ratio)\\s*[:\\-\\=]\\s*([^\\n\\r\\-]+)/i);\nlet risk = extractValue(/(?:Risk Summary|Risk Factors|Primary Risk)\\s*[:\\-\\=]\\s*([^\\n\\r\\-]+)/i);\nlet rec = extractValue(/(?:Underwriting Recommendation|Recommendation)\\s*[:\\-\\=]\\s*([^\\n\\r\\-]+)/i);\n\n// 4. Pastikan DSCR memiliki akhiran 'x' jika hanya berupa angka\nif (dscr !== \"Not Specified\" && !dscr.toLowerCase().includes('x')) {\n  dscr += \"x\";\n}\n\n// 5. Kembalikan data murni dari PDF\nreturn {\n  json: {\n    property_name: propName,\n    noi_value: noi,\n    dscr_ratio: dscr,\n    risk_summary: risk,\n    underwriting_recommendation: rec\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1360,
+        -96
+      ],
+      "id": "9192628d-0cda-4b61-aac4-1a8da199ea9a",
+      "name": "Recover raw data from the PDF"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1W7nfyUk-PIu6qwiwn_62OZWBYyxDkl4deIbwj4vzdvs",
+          "mode": "list",
+          "cachedResultName": "portfolio-risk-automation",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1W7nfyUk-PIu6qwiwn_62OZWBYyxDkl4deIbwj4vzdvs/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1W7nfyUk-PIu6qwiwn_62OZWBYyxDkl4deIbwj4vzdvs/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Name": "={{ $json.property_name }}",
+            "NOI": "={{ $json.noi_value }}",
+            "DSCR": "={{ $json.dscr_ratio }}",
+            "Risk Factor": "={{ $json.risk_summary }}",
+            "Recommendation": "={{ $json.underwriting_recommendation }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Name",
+              "displayName": "Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "NOI",
+              "displayName": "NOI",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "DSCR",
+              "displayName": "DSCR",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Risk Factor",
+              "displayName": "Risk Factor",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Recommendation",
+              "displayName": "Recommendation",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1552,
+        -96
+      ],
+      "id": "6650ee9f-0fa5-4139-a602-95a73ddabba1",
+      "name": "Append Row",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "pTgFrIUCPD6mqLun",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.limit",
+      "typeVersion": 1,
+      "position": [
+        176,
+        -80
+      ],
+      "id": "66d513b9-8e3c-4709-b223-b30cd0fb61c6",
+      "name": "Select First Items"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $('Append Row').item.json.Recommendation }}",
+                    "rightValue": "=Approved",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "c6ce3a7b-cb8b-4973-84de-ac48c5cb4240"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "b6076620-d306-4cf5-9650-4ff6681959b2",
+                    "leftValue": "={{ $('Append Row').item.json.Recommendation }}",
+                    "rightValue": "Review Required",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "57c930c0-30e9-4347-8b41-1e93a55fea32",
+                    "leftValue": "={{ $('Append Row').item.json.Recommendation }}",
+                    "rightValue": "Rejected",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        1952,
+        -112
+      ],
+      "id": "09fbab30-0126-406f-8016-5712d73c1b35",
+      "name": "Switch"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "==Please generate a detailed HTML Risk Advisory Memo for the following property requiring manual review:\n\n- Property Name: {{ $('Append Row').item.json.Name }}\n- Net Operating Income (NOI): {{ $('Append Row').item.json.NOI }}\n- Debt Service Coverage Ratio (DSCR): {{ $('Append Row').item.json.DSCR }}\n- Identified Risk Factors: {{ $('Append Row').item.json[\"Risk Factor\"] }}\n- Status: {{ $('Append Row').item.json.Recommendation }}\n\nEnsure the email clearly highlights why this deal was flagged, details the specific risks (e.g., tight DSCR or high leverage), and outlines the recommended verification steps required before making a final decision.",
+        "options": {
+          "systemMessage": "You are an Executive Commercial Real Estate (CRE) Analyst preparing a high-level Investment Deal Memo for the company's Founder and Investment Committee.\n\nCRITICAL INSTRUCTIONS:\n1. FOCUS ON PROVIDED METRICS: Use ONLY the property metrics supplied in the prompt. Do not invent financial data or assumptions.\n2. OUTPUT FORMAT: Respond ONLY with clean, inline HTML content suitable for an email body. Do NOT include standard markdown code fences (such as ```html), <html>, <head>, or <body> tags.\n3. VISUAL STYLE & TONE:\n   - Tone: Confident, professional, executive, and concise.\n   - Use clean inline CSS with modern typography (e.g., font-family: Arial, sans-serif).\n   - Display an 'APPROVED' status badge prominently in green (#28a745 background, white text, bold).\n   - Structure the content using a main container div, summary table for key metrics, a short risk highlight section, and a clear 'Next Steps' call to action for final signature/closing approval."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        2272,
+        -592
+      ],
+      "id": "6930b49b-b1cb-4886-97f2-8d5d94e59c9c",
+      "name": "AI Agent1"
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-3.1-flash-lite",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        2272,
+        -384
+      ],
+      "id": "ef24f3b4-f212-4633-9710-c0dfd4ff853d",
+      "name": "Google Gemini Chat Model1",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "yedx9ga2XPSt4Ed2",
+          "name": "Google Gemini(PaLM) Api account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "==Please generate a detailed HTML Risk Advisory Memo for the following property requiring manual review:\n\n- Property Name: {{ $('Append Row').item.json.Name }}\n- Net Operating Income (NOI): {{ $('Append Row').item.json.NOI }}\n- Debt Service Coverage Ratio (DSCR): {{ $('Append Row').item.json.DSCR }}\n- Identified Risk Factors: {{ $('Append Row').item.json[\"Risk Factor\"] }}\n- Status: {{ $('Append Row').item.json.Recommendation }}\n\nEnsure the email clearly highlights why this deal was flagged, details the specific risks (e.g., tight DSCR or high leverage), and outlines the recommended verification steps required before making a final decision.",
+        "options": {
+          "systemMessage": "You are an Executive Commercial Real Estate (CRE) Risk Analyst preparing an Investment Advisory Memo for the Senior Underwriting Team and Risk Committee.\n\nCRITICAL INSTRUCTIONS:\n1. FOCUS ON PROVIDED METRICS: Use ONLY the property metrics supplied in the prompt. Do not invent financial data or assumptions.\n2. OUTPUT FORMAT: Respond ONLY with clean, inline HTML content suitable for an email body. Do NOT include standard markdown code fences (such as ```html), <html>, <head>, or <body> tags.\n3. VISUAL STYLE & TONE:\n   - Tone: Objective, cautious, analytical, and professional.\n   - Use clean inline CSS with modern typography (e.g., font-family: Arial, sans-serif).\n   - Display a 'REVIEW REQUIRED' status badge prominently in yellow/orange (#ffc107 background, dark text, bold).\n   - Structure the content using a main container div, summary table for key metrics, a highlighted 'Risk & Flagged Items' callout box, and a list of recommended audit/verification actions for the team."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        2272,
+        -96
+      ],
+      "id": "e4576abb-0985-47d1-9eb6-9ce6ee4cbaad",
+      "name": "AI Agent2"
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-3.1-flash-lite",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        2272,
+        128
+      ],
+      "id": "26e7bdf1-334a-4d0c-8bda-cba085d59c3a",
+      "name": "Google Gemini Chat Model2",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "yedx9ga2XPSt4Ed2",
+          "name": "Google Gemini(PaLM) Api account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "==Please generate a formal HTML Rejection Summary Memo for the following deal:\n\n- Property Name: {{ $('Append Row').item.json.Name }}\n- Net Operating Income (NOI): {{ $('Append Row').item.json.NOI }}\n- Debt Service Coverage Ratio (DSCR): {{ $('Append Row').item.json.DSCR }}\n- Identified Risk Factors: {{ $('Append Row').item.json[\"Risk Factor\"] }}\n- Status: {{ $('Append Row').item.json.Recommendation }}\n\nEnsure the email clearly explains why this deal was rejected (e.g., inadequate DSCR, unacceptable risk profile, or poor return metrics) and confirms that the file will be archived.",
+        "options": {
+          "systemMessage": "You are an Executive Commercial Real Estate (CRE) Risk & Compliance Officer preparing a Formal Rejection Notice for the Investment Committee and Acquisition Team.\n\nCRITICAL INSTRUCTIONS:\n1. FOCUS ON PROVIDED METRICS: Use ONLY the property metrics supplied in the prompt. Do not invent financial data or assumptions.\n2. OUTPUT FORMAT: Respond ONLY with clean, inline HTML content suitable for an email body. Do NOT include standard markdown code fences (such as ```html), <html>, <head>, or <body> tags.\n3. VISUAL STYLE & TONE:\n   - Tone: Formal, objective, firm, and professional.\n   - Use clean inline CSS with modern typography (e.g., font-family: Arial, sans-serif).\n   - Display a 'REJECTED' status badge prominently in red (#dc3545 background, white text, bold).\n   - Structure the content using a main container div, summary table for key metrics, a clear 'Key Decision Factors' callout box detailing why the target yields/criteria were missed, and a brief note on archiving the deal."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        2288,
+        416
+      ],
+      "id": "eacfd229-c1a0-48dc-9459-e723e9663a8d",
+      "name": "AI Agent3"
+    },
+    {
+      "parameters": {
+        "sendTo": "egiexcel27@gmail.com",
+        "subject": "=[APPROVED] CRE Deal Memo: {{ $('Append Row').item.json.Name }}",
+        "message": "={{ $json.output }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        2608,
+        -592
+      ],
+      "id": "6d6ed354-e2ef-4dd4-86d4-45c8306bd806",
+      "name": "Approved Send",
+      "webhookId": "ae4e23e0-ffad-4710-9d15-3446c62ab048",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "CcZLxIKd1k3Zx0l4",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "egiexcel27@gmail.com",
+        "subject": "=[ACTION REQUIRED] CRE Deal Review Needed: {{ $('Append Row').item.json.Name }}",
+        "message": "={{ $json.output }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        2608,
+        -96
+      ],
+      "id": "716bd97e-96f8-405b-962a-c7ec4dd22349",
+      "name": "Review Required Send",
+      "webhookId": "ae4e23e0-ffad-4710-9d15-3446c62ab048",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "CcZLxIKd1k3Zx0l4",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "egiexcel27@gmail.com",
+        "subject": "=[REJECTED] CRE Deal Assessment: {{ $('Append Row').item.json.Name }}",
+        "message": "={{ $json.output }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        2608,
+        416
+      ],
+      "id": "2a55aa5c-9271-47b5-af7c-f4dcc43822c0",
+      "name": "Review Required Send1",
+      "webhookId": "ae4e23e0-ffad-4710-9d15-3446c62ab048",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "CcZLxIKd1k3Zx0l4",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-3.1-flash-lite",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        2288,
+        624
+      ],
+      "id": "024b22f8-0e66-4d8b-9b91-b6ca90307ec6",
+      "name": "Google Gemini Chat Model3",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "yedx9ga2XPSt4Ed2",
+          "name": "Google Gemini(PaLM) Api account 2"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Download file": {
+      "main": [
+        [
+          {
+            "node": "Filter Only PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Only PDF": {
+      "main": [
+        [
+          {
+            "node": "Extract from File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract from File": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Move file": {
+      "main": [
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Recover raw data from the PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Search files and folders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search files and folders": {
+      "main": [
+        [
+          {
+            "node": "Select First Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [
+          {
+            "node": "Search files and folders",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recover raw data from the PDF": {
+      "main": [
+        [
+          {
+            "node": "Append Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append Row": {
+      "main": [
+        [
+          {
+            "node": "Move file",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Select First Items": {
+      "main": [
+        [
+          {
+            "node": "Download file",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "AI Agent1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "AI Agent2",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "AI Agent3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model1": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent1",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent1": {
+      "main": [
+        [
+          {
+            "node": "Approved Send",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model2": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent2",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent2": {
+      "main": [
+        [
+          {
+            "node": "Review Required Send",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approved Send": {
+      "main": [
+        []
+      ]
+    },
+    "AI Agent3": {
+      "main": [
+        [
+          {
+            "node": "Review Required Send1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model3": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent3",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "1b464f60-e1ff-4315-937b-7c66b68a7b5c",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "2f8cdf98bf5a32328411a90ebbcb9b5f462c1fad1f4fe233e3628757841b4196"
+  },
+  "nodeGroups": [],
+  "id": "LDfY9lczYa8WVseH",
+  "tags": []
+}
